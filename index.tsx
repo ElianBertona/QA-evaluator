@@ -551,14 +551,18 @@ type Question = {
 };
 
 type AppState = 'login' | 'register' | 'welcome' | 'quiz' | 'results' | 'dashboard';
-type User = {
+
+type StoredUser = {
   name: string;
+  email: string;
+  password: string;
   role: 'user' | 'admin';
 };
 
 type EvaluationResult = {
   id: number;
   userName: string;
+  userEmail: string;
   score: number;
   total: number;
   level: string;
@@ -572,15 +576,33 @@ type QuizProgress = {
 
 // --- UI Components ---
 
-const LoginScreen = ({ onLogin, onNavigateToRegister }: { onLogin: (user: User) => void, onNavigateToRegister: () => void }) => {
+const LoginScreen = ({ onLogin, onNavigateToRegister, findUserByEmail }: { onLogin: (user: StoredUser) => void, onNavigateToRegister: () => void, findUserByEmail: (email: string) => StoredUser | undefined }) => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [error, setError] = useState<string | null>(null);
     
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        const name = email.split('@')[0].replace(/\./g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || 'Usuario';
-        const role = email.toLowerCase() === 'admin@test.com' ? 'admin' : 'user';
-        onLogin({ name, role });
+        setError(null);
+
+        // Admin hardcoded login
+        if (email.toLowerCase() === 'admin@test.com') {
+            onLogin({ name: 'Admin', email: 'admin@test.com', password: '', role: 'admin' });
+            return;
+        }
+
+        const foundUser = findUserByEmail(email);
+        if (!foundUser) {
+            setError('El email no está registrado.');
+            return;
+        }
+
+        if (foundUser.password !== password) {
+            setError('La contraseña es incorrecta.');
+            return;
+        }
+
+        onLogin(foundUser);
     };
 
     return (
@@ -588,6 +610,7 @@ const LoginScreen = ({ onLogin, onNavigateToRegister }: { onLogin: (user: User) 
             <h1 className="text-4xl font-bold text-slate-900 mb-2">Iniciar Sesión</h1>
             <p className="text-slate-600 mb-8">Ingresa a tu cuenta para continuar.</p>
             <form onSubmit={handleSubmit} className="text-left space-y-4">
+                {error && <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">{error}</div>}
                 <div>
                     <label htmlFor="email" className="block text-sm font-medium text-slate-700">Email</label>
                     <input 
@@ -628,14 +651,24 @@ const LoginScreen = ({ onLogin, onNavigateToRegister }: { onLogin: (user: User) 
     );
 };
 
-const RegisterScreen = ({ onRegister, onNavigateToLogin }: { onRegister: (user: User) => void, onNavigateToLogin: () => void }) => {
+const RegisterScreen = ({ onRegister, onNavigateToLogin, findUserByEmail, addUser }: { onRegister: (user: StoredUser) => void, onNavigateToLogin: () => void, findUserByEmail: (email: string) => StoredUser | undefined, addUser: (user: StoredUser) => void }) => {
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [error, setError] = useState<string | null>(null);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        onRegister({ name, role: 'user' });
+        setError(null);
+
+        if (findUserByEmail(email)) {
+            setError('Este email ya está registrado.');
+            return;
+        }
+
+        const newUser: StoredUser = { name, email, password, role: 'user' as const };
+        addUser(newUser);
+        onRegister(newUser);
     };
 
     return (
@@ -643,6 +676,7 @@ const RegisterScreen = ({ onRegister, onNavigateToLogin }: { onRegister: (user: 
             <h1 className="text-4xl font-bold text-slate-900 mb-2">Crear Cuenta</h1>
             <p className="text-slate-600 mb-8">Completa tus datos para registrarte.</p>
             <form onSubmit={handleSubmit} className="text-left space-y-4">
+                 {error && <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">{error}</div>}
                  <div>
                     <label htmlFor="name" className="block text-sm font-medium text-slate-700">Nombre</label>
                     <input 
@@ -695,7 +729,7 @@ const RegisterScreen = ({ onRegister, onNavigateToLogin }: { onRegister: (user: 
 
 
 const WelcomeScreen = ({ user, onStartNew, onContinue, hasSavedProgress, onLogout, onNavigateToDashboard }: { 
-    user: User, 
+    user: StoredUser, 
     onStartNew: () => void, 
     onContinue: () => void,
     hasSavedProgress: boolean,
@@ -812,7 +846,7 @@ const QuizScreen = ({
   );
 };
 
-const ResultsScreen = ({ userAnswers, onRestart, onFinishEvaluation }: { userAnswers: string[]; onRestart: () => void, onFinishEvaluation: (score: number, total: number, level: string) => void }) => {
+const ResultsScreen = ({ user, userAnswers, onRestart, onFinishEvaluation }: { user: StoredUser; userAnswers: string[]; onRestart: () => void, onFinishEvaluation: (score: number, total: number, level: string) => void }) => {
   const [showReview, setShowReview] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const resultsContentRef = useRef<HTMLDivElement>(null);
@@ -877,7 +911,7 @@ const ResultsScreen = ({ userAnswers, onRestart, onFinishEvaluation }: { userAns
               format: [canvas.width, canvas.height]
           });
           pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
-          pdf.save(`Resultados-Evaluacion-QA.pdf`);
+          pdf.save(`Resultados-Evaluacion-${user.name.replace(/ /g, '_')}.pdf`);
           setIsGeneratingPdf(false);
       }).catch(err => {
           console.error("Error al generar PDF:", err);
@@ -888,6 +922,12 @@ const ResultsScreen = ({ userAnswers, onRestart, onFinishEvaluation }: { userAns
   return (
     <div className="w-full text-center">
       <div ref={resultsContentRef} className="bg-white p-4">
+        {user && (
+          <div className="mb-4 text-left border-b pb-4">
+            <p><strong>Candidato:</strong> {user.name}</p>
+            <p><strong>Email:</strong> {user.email}</p>
+          </div>
+        )}
         <h2 className="text-3xl font-bold mb-3">Evaluación Completada</h2>
         <div className="mb-6">
           <span className="text-sm font-medium text-slate-600">Nivel Alcanzado</span>
@@ -1121,48 +1161,88 @@ const AdminDashboard = ({ onBack, evaluations, adminEmail, onEmailChange }: { on
 
 const App = () => {
   const [appState, setAppState] = useState<AppState>('login');
-  const [user, setUser] = useState<User | null>(null);
-  const [allEvaluations, setAllEvaluations] = useState<EvaluationResult[]>([
-    {id: 1, userName: "Ana Gomez", score: 52, total: 63, level: "Senior", date: new Date(Date.now() - 86400000).toLocaleDateString()},
-    {id: 2, userName: "Luis Castro", score: 37, total: 63, level: "Semi-Senior (Ssr)", date: new Date(Date.now() - 172800000).toLocaleDateString()},
-    {id: 3, userName: "Carla Diaz", score: 21, total: 63, level: "Junior (Jr)", date: new Date(Date.now() - 259200000).toLocaleDateString()},
-  ]);
-  const [adminEmail, setAdminEmail] = useState('');
+  const [user, setUser] = useState<StoredUser | null>(null);
 
-  // State for quiz progress
+  // --- User Database Simulation ---
+  const [users, setUsers] = useState<StoredUser[]>(() => {
+    const savedUsers = localStorage.getItem('qa-app-users');
+    return savedUsers ? JSON.parse(savedUsers) : [];
+  });
+
+  const saveUsers = (newUsers: StoredUser[]) => {
+      setUsers(newUsers);
+      localStorage.setItem('qa-app-users', JSON.stringify(newUsers));
+  };
+
+  const findUserByEmail = (email: string) => users.find(u => u.email.toLowerCase() === email.toLowerCase());
+  
+  const addUser = (user: StoredUser) => {
+      const newUsers = [...users, user];
+      saveUsers(newUsers);
+  };
+
+
+  // --- All Evaluations Data (persisted) ---
+  const [allEvaluations, setAllEvaluations] = useState<EvaluationResult[]>(() => {
+    const savedEvals = localStorage.getItem('qa-app-evaluations');
+    return savedEvals ? JSON.parse(savedEvals) : [
+        {id: 1, userName: "Ana Gomez", userEmail: "ana@test.com", score: 52, total: 63, level: "Senior", date: new Date(Date.now() - 86400000).toLocaleDateString()},
+        {id: 2, userName: "Luis Castro", userEmail: "luis@test.com", score: 37, total: 63, level: "Semi-Senior (Ssr)", date: new Date(Date.now() - 172800000).toLocaleDateString()},
+        {id: 3, userName: "Carla Diaz", userEmail: "carla@test.com", score: 21, total: 63, level: "Junior (Jr)", date: new Date(Date.now() - 259200000).toLocaleDateString()},
+    ];
+  });
+  
+  const saveEvaluations = (newEvals: EvaluationResult[]) => {
+      setAllEvaluations(newEvals);
+      localStorage.setItem('qa-app-evaluations', JSON.stringify(newEvals));
+  };
+
+  // --- Admin Config (persisted) ---
+  const [adminEmail, setAdminEmail] = useState<string>(() => localStorage.getItem('qa-admin-email') || '');
+
+  const handleAdminEmailChange = (email: string) => {
+      setAdminEmail(email);
+      localStorage.setItem('qa-admin-email', email);
+  };
+
+
+  // --- Quiz Progress State ---
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [quizAnswers, setQuizAnswers] = useState<string[]>([]);
-  const [savedProgress, setSavedProgress] = useState<QuizProgress | null>(null);
+  const [hasSavedProgress, setHasSavedProgress] = useState(false);
 
-  const clearProgress = (currentUser: User | null) => {
+
+  const clearProgress = (currentUser: StoredUser | null) => {
       const userToClear = currentUser || user;
       if (userToClear) {
-        localStorage.removeItem(`qa-quiz-progress-${userToClear.name}`);
+        localStorage.removeItem(`qa-quiz-progress-${userToClear.email}`);
       }
-      setSavedProgress(null);
+      setHasSavedProgress(false);
       setCurrentQuestionIndex(0);
       setQuizAnswers([]);
   };
 
-  const handleLogin = (loggedInUser: User) => {
+  const handleLogin = (loggedInUser: StoredUser) => {
     setUser(loggedInUser);
-    const progressJSON = localStorage.getItem(`qa-quiz-progress-${loggedInUser.name}`);
+    const progressJSON = localStorage.getItem(`qa-quiz-progress-${loggedInUser.email}`);
     if (progressJSON) {
-      setSavedProgress(JSON.parse(progressJSON));
+      const savedData: QuizProgress = JSON.parse(progressJSON);
+      setQuizAnswers(savedData.answers);
+      setCurrentQuestionIndex(savedData.index);
+      setHasSavedProgress(true);
     } else {
-      setSavedProgress(null);
+      setHasSavedProgress(false);
     }
     setAppState('welcome');
   };
 
-  const handleRegister = (registeredUser: User) => {
+  const handleRegister = (registeredUser: StoredUser) => {
     setUser(registeredUser);
-    setSavedProgress(null); // No progress for new users
+    setHasSavedProgress(false); // No progress for new users
     setAppState('welcome');
   };
 
   const handleLogout = () => {
-    clearProgress(user);
     setUser(null);
     setAppState('login');
   };
@@ -1173,18 +1253,14 @@ const App = () => {
   };
 
   const handleContinue = () => {
-    if (savedProgress) {
-        setCurrentQuestionIndex(savedProgress.index);
-        setQuizAnswers(savedProgress.answers);
-    }
     setAppState('quiz');
   };
 
   const handleSaveAndExit = () => {
     if (user) {
         const progress: QuizProgress = { index: currentQuestionIndex, answers: quizAnswers };
-        localStorage.setItem(`qa-quiz-progress-${user.name}`, JSON.stringify(progress));
-        setSavedProgress(progress);
+        localStorage.setItem(`qa-quiz-progress-${user.email}`, JSON.stringify(progress));
+        setHasSavedProgress(true);
     }
     setAppState('welcome');
   };
@@ -1192,17 +1268,17 @@ const App = () => {
   const handleNextQuestion = (selectedAnswer: string) => {
     const newAnswers = [...quizAnswers, selectedAnswer];
     setQuizAnswers(newAnswers);
-
-    if (user) {
-        const progress: QuizProgress = { index: currentQuestionIndex + 1, answers: newAnswers };
-        localStorage.setItem(`qa-quiz-progress-${user.name}`, JSON.stringify(progress));
-    }
     
-    if (currentQuestionIndex < QA_QUESTIONS.length - 1) {
-      setCurrentQuestionIndex(currentQuestionIndex + 1);
+    const nextIndex = currentQuestionIndex + 1;
+    
+    if (nextIndex < QA_QUESTIONS.length) {
+      setCurrentQuestionIndex(nextIndex);
     } else {
       // Finished quiz
-      clearProgress(user);
+      if(user) {
+          localStorage.removeItem(`qa-quiz-progress-${user.email}`);
+      }
+      setHasSavedProgress(false);
       setAppState('results');
     }
   };
@@ -1211,27 +1287,23 @@ const App = () => {
   const handleFinishEvaluation = (score: number, total: number, level: string) => {
     if (!user) return;
     
-    const mostRecentResult = allEvaluations[allEvaluations.length - 1];
-    if(mostRecentResult && mostRecentResult.userName === user.name && mostRecentResult.score === score && mostRecentResult.date === new Date().toLocaleDateString()) {
-      return;
-    }
-    
     const newEvaluation: EvaluationResult = {
         id: Date.now(),
         userName: user.name,
+        userEmail: user.email,
         score,
         total,
         level,
         date: new Date().toLocaleDateString()
     };
-    setAllEvaluations(prev => [...prev, newEvaluation]);
+    saveEvaluations([...allEvaluations, newEvaluation]);
 
     if (adminEmail) {
         console.log(`%c--- SIMULACIÓN DE ENVÍO DE CORREO ---`, 'color: #0d9488; font-weight: bold;');
         console.log(`Para: ${adminEmail}`);
         console.log(`Asunto: Nueva Evaluación Completada - ${user.name}`);
         console.log(`Contenido:`);
-        console.log(`  - Usuario: ${user.name}`);
+        console.log(`  - Usuario: ${user.name} (${user.email})`);
         console.log(`  - Puntaje: ${score}/${total}`);
         console.log(`  - Nivel: ${level}`);
         console.log(`------------------------------------`);
@@ -1247,13 +1319,13 @@ const App = () => {
   const renderContent = () => {
     switch (appState) {
       case 'login':
-        return <LoginScreen onLogin={handleLogin} onNavigateToRegister={() => setAppState('register')} />;
+        return <LoginScreen onLogin={handleLogin} onNavigateToRegister={() => setAppState('register')} findUserByEmail={findUserByEmail} />;
       case 'register':
-        return <RegisterScreen onRegister={handleRegister} onNavigateToLogin={() => setAppState('login')} />;
+        return <RegisterScreen onRegister={handleRegister} onNavigateToLogin={() => setAppState('login')} findUserByEmail={findUserByEmail} addUser={addUser} />;
       case 'welcome':
         return user ? <WelcomeScreen 
                         user={user} 
-                        hasSavedProgress={!!savedProgress}
+                        hasSavedProgress={hasSavedProgress}
                         onContinue={handleContinue}
                         onStartNew={handleStartNew} 
                         onLogout={handleLogout} 
@@ -1267,11 +1339,11 @@ const App = () => {
                   onSaveAndExit={handleSaveAndExit}
                 />;
       case 'results':
-        return <ResultsScreen userAnswers={quizAnswers} onRestart={handleRestart} onFinishEvaluation={handleFinishEvaluation} />;
+        return user ? <ResultsScreen user={user} userAnswers={quizAnswers} onRestart={handleRestart} onFinishEvaluation={handleFinishEvaluation} /> : null;
       case 'dashboard':
-        return <AdminDashboard onBack={handleRestart} evaluations={allEvaluations} adminEmail={adminEmail} onEmailChange={setAdminEmail} />;
+        return <AdminDashboard onBack={handleRestart} evaluations={allEvaluations} adminEmail={adminEmail} onEmailChange={handleAdminEmailChange} />;
       default:
-        return <LoginScreen onLogin={handleLogin} onNavigateToRegister={() => setAppState('register')} />;
+        return <LoginScreen onLogin={handleLogin} onNavigateToRegister={() => setAppState('register')} findUserByEmail={findUserByEmail} />;
     }
   };
 
